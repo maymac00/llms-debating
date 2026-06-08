@@ -11,16 +11,51 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .agent import CFAgent, load_agent, load_agent_meta
-from .backends import Backend, LiteLLMBackend, VLLMBackend
+from .backends import Backend, InferenceLog, LiteLLMBackend, LoggingBackend, VLLMBackend
 from .protocols import DebateProtocol, RoundRobin
 
 logger = logging.getLogger(__name__)
+
+# Config values may reference environment variables as ${VAR} or ${VAR:-default},
+# so secrets (e.g. a vLLM base_url with an internal IP) need not be committed.
+_ENV_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def expand_env(value: Any) -> Any:
+    """Recursively expand ``${VAR}`` / ``${VAR:-default}`` references in a config.
+
+    A bare ``${VAR}`` whose variable is unset (or empty) raises a clear error; use
+    ``${VAR:-default}`` to supply a fallback. Strings without a reference and all
+    non-string scalars pass through unchanged.
+    """
+    if isinstance(value, str):
+
+        def _sub(match: re.Match[str]) -> str:
+            name, default = match.group(1), match.group(2)
+            resolved = os.environ.get(name)
+            if resolved:
+                return resolved
+            if default is not None:
+                return default
+            raise ValueError(
+                f"config references ${{{name}}} but environment variable {name!r} is "
+                "not set; set it, or use a ${VAR:-default} fallback in the config"
+            )
+
+        return _ENV_VAR.sub(_sub, value)
+    if isinstance(value, dict):
+        return {k: expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [expand_env(v) for v in value]
+    return value
 
 
 def make_backend(spec: dict[str, Any]) -> Backend:
@@ -58,9 +93,14 @@ def resolve_backend_spec(
 
 def build_agents(config: dict[str, Any]) -> list[CFAgent]:
     run_default = config.get("backend")  # optional shared fallback backend
+    debug = config.get("debug") or {}
+    # Debug profile: one shared sink so call indices are global across agents.
+    sink = InferenceLog(debug.get("log_path")) if debug.get("log_inferences") else None
     agents: list[CFAgent] = []
     for entry in config["agents"]:
         backend = make_backend(resolve_backend_spec(entry, run_default))
+        if sink is not None:  # wrap so every inference call is recorded
+            backend = LoggingBackend(backend, label=entry["path"], sink=sink)
         agent = load_agent(entry["path"], backend)
         # Config 'turn' overrides agent.yaml; applied after load_agent.
         turn_cfg = entry.get("turn", {}) or {}
@@ -105,6 +145,19 @@ def main(argv: list[str] | None = None) -> None:
         default="INFO",
         help="Logging level (DEBUG logs full prompts). Default: INFO.",
     )
+    parser.add_argument(
+        "--debug-calls",
+        action="store_true",
+        help="Log every backend inference call (exact prompt + response) to the "
+        "console and a JSONL file. Equivalent to a 'debug:' block in the config.",
+    )
+    parser.add_argument(
+        "--debug-log",
+        default=None,
+        metavar="PATH",
+        help="Where to write the inference-call JSONL (implies --debug-calls; "
+        "default: outputs/inference_calls.jsonl).",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -113,6 +166,14 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    config = expand_env(config)  # resolve ${VAR} so secrets stay out of the config file
+
+    if args.debug_calls or args.debug_log:  # CLI flags turn the debug profile on
+        debug = dict(config.get("debug") or {})
+        debug["log_inferences"] = True
+        debug["log_path"] = args.debug_log or debug.get("log_path") or "outputs/inference_calls.jsonl"
+        config["debug"] = debug
+
     asyncio.run(run_deliberation(config))  # thin sync wrapper around the async run
 
 

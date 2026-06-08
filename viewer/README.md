@@ -28,3 +28,18 @@ python viewer/serve.py --no-browser  # don't auto-open
 Open `viewer/index.html` directly in a browser and drag a `.jsonl` transcript
 onto the page (or use *Open file…*). No server, no dependencies. Agent display
 names aren't available this way, so speakers are labelled by their `cf_id`.
+
+## Build a portable HTML file
+
+To turn one transcript into a single self-contained `.html` file (scenario plus
+every turn's proposal + justification, rendered exactly as the server shows
+them), bake it in:
+
+```bash
+python viewer/build_static.py outputs/transcript.jsonl          # -> outputs/transcript.html
+python viewer/build_static.py outputs/transcript.jsonl -o out.html
+```
+
+The result embeds the transcript and the agents' `display_name`s inline and
+needs no server or network — share it or open it with `file://`. It reuses
+`index.html` as the template, so the output can't drift from the live viewer.

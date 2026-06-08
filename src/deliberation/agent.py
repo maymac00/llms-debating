@@ -177,23 +177,45 @@ class CFAgent:
         )
         if not tool_lines:
             tool_lines = "(no tools available this turn)"
+        n_prior = sum(len(rnd.turns) for rnd in transcript.rounds)
+        if n_prior == 0:
+            state = (
+                "No one has spoken yet — you are opening the deliberation. There is "
+                "no prior context, so make your opening proposal (the inspection "
+                "tools would return nothing this round)."
+            )
+        else:
+            state = (
+                f"{n_prior} earlier turn(s) precede you, shown above as messages. "
+                "Inspect them with the tools if it helps."
+            )
         return (
             "You are taking your turn in a multi-agent policy deliberation. "
             "Reason from your conceptual framework.\n\n"
             "# Scenario\n"
             f"{transcript.scenario.strip()}\n\n"
+            "# Deliberation so far\n"
+            f"{state}\n\n"
             "# How to act\n"
             "Reply with EXACTLY ONE JSON object and nothing else. Choose one of:\n\n"
             "1. Call a tool to inspect the deliberation:\n"
             '   {"tool": "<name>", "input": { ... }}\n\n'
             "2. Finalise your contribution for this round:\n"
-            '   {"final": {"proposal": "<your policy proposal>", '
-            '"justification": "<why, from your framework>"}}\n\n'
+            '   {"final": {"proposal": "<one concrete policy, 1-2 sentences>", '
+            '"justification": "<2-4 short points, grounded in your framework>"}}\n\n'
             "# Available tools\n"
             f"{tool_lines}\n\n"
-            "Use tools only if they help; you may finalise immediately. When you "
+            "Use tools to inform your decision and consider other agents' perspectives. When you "
             "finalise, the proposal and justification are shared with the other "
-            "agents (your tool use and reasoning stay private)."
+            "agents (your tool use and reasoning stay private).\n\n"
+            "# Style — keep it tight and skimmable\n"
+            "- Proposal: one concrete, specific policy.\n"
+            '- Justification: Straightforward points, one line each as "- " bullets, each '
+            "grounded in your framework; lead with the strongest.\n"
+            "- Don't restate the scenario or re-quote other agents; but reference a prior "
+            "point in a few words if you must.\n"
+            "- Length is not quality — do "
+            "NOT expand to match or out-do earlier turns. Brevity is never penalised."
         )
 
     # -- the capped, agent-decided loop ----------------------------------
@@ -207,6 +229,7 @@ class CFAgent:
         justification = ""
         n_calls = 0  # backend (llm) calls so far; tool runs do not count
         cap_hit = False
+        seen_tool_calls: set[tuple[str, str]] = set()  # (tool, input) already run this turn
 
         for call_index in range(self.max_calls):
             forced = call_index == self.max_calls - 1  # last allowed call
@@ -278,8 +301,20 @@ class CFAgent:
                 # Deciding llm Step, then the matching tool Step (same label).
                 steps.append(self._llm_step(label, sent, completion, base_meta, "ok"))
                 tool = tools_by_name[action.tool_name]
-                tool_step, observation = self._run_tool(tool, label, action.tool_input or {})
+                tool_input = action.tool_input or {}
+                tool_step, observation = self._run_tool(tool, label, tool_input)
                 steps.append(tool_step)
+                # The transcript is immutable during a turn, so an identical repeat
+                # returns an identical result. Call that out so the agent stops
+                # re-issuing the same query and moves on (a common round-1 loop).
+                key = (action.tool_name, json.dumps(tool_input, sort_keys=True, ensure_ascii=False))
+                if key in seen_tool_calls:
+                    observation += (
+                        "\n[note] You already ran this exact call this turn; the "
+                        "result is identical and will stay so. Do not repeat it — "
+                        "use a different input or finalise."
+                    )
+                seen_tool_calls.add(key)
                 # Feed the result back as an observation and loop again.
                 messages = messages + [{"role": "user", "content": observation}]
                 continue

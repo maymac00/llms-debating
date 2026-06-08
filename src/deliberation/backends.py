@@ -12,8 +12,11 @@ backend calls in the agent loop).
 from __future__ import annotations
 
 import asyncio
+import itertools
+import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from .models import Completion
@@ -220,3 +223,96 @@ def _extract_token_data(choice: Any) -> tuple[list[float] | None, list[int] | No
     except Exception:  # pragma: no cover - defensive
         logprobs = None
     return logprobs, None  # token_ids not exposed by the OpenAI logprobs shape
+
+
+# --------------------------------------------------------------------------- #
+# Debug profile: log exactly what inference calls were made
+# --------------------------------------------------------------------------- #
+class InferenceLog:
+    """Shared sink for :class:`LoggingBackend`: a monotonic call counter and an
+    optional JSONL file.
+
+    One instance is shared by every wrapped backend in a run, so call indices are
+    global and ordered across agents. If ``path`` is given it is truncated at
+    construction (one fresh log per run) and each call appends one JSON record.
+    """
+
+    def __init__(self, path: str | None = None) -> None:
+        self.path = Path(path) if path else None
+        self._counter = itertools.count(1)
+        if self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text("", encoding="utf-8")  # fresh log each run
+
+    def next_index(self) -> int:
+        return next(self._counter)
+
+    def write(self, record: dict[str, Any]) -> None:
+        if self.path is None:
+            return
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+def _preview(text: str, n: int = 80) -> str:
+    """One-line, length-capped preview of a response for the console summary."""
+    flat = " ".join(text.split())
+    return flat[:n] + ("…" if len(flat) > n else "")
+
+
+class LoggingBackend:
+    """Backend decorator that records every ``generate`` call.
+
+    Wraps any :class:`Backend` and logs the exact ``messages`` sent and the
+    :class:`Completion` returned — plus model, latency and usage — without
+    altering generation (it delegates and returns the inner result unchanged, so
+    it satisfies the :class:`Backend` Protocol like any other backend).
+
+    A one-line summary with a response *preview* goes to the logger at INFO (so it
+    shows at the default log level); the full prompt and response go to DEBUG; and,
+    when the shared :class:`InferenceLog` has a path, a complete JSON record per
+    call is appended there. The exact, full record lives in the JSONL — the console
+    is just a readable view.
+    """
+
+    def __init__(
+        self, inner: Backend, *, label: str = "", sink: InferenceLog | None = None
+    ) -> None:
+        self.inner = inner
+        self.label = label
+        self.sink = sink or InferenceLog()
+        self.model = getattr(inner, "model", "?")
+
+    async def generate(self, messages: list[dict[str, Any]], **sampling: Any) -> Completion:
+        idx = self.sink.next_index()  # assigned before the call so order = initiation order
+        t0 = time.perf_counter()
+        completion = await self.inner.generate(messages, **sampling)
+        latency = time.perf_counter() - t0
+
+        logger.info(
+            "inference #%d [%s] %s | %d msg(s) | %.2fs | resp: %s",
+            idx,
+            self.label or "?",
+            self.model,
+            len(messages),
+            latency,
+            _preview(completion.text),
+        )
+        if logger.isEnabledFor(logging.DEBUG):  # full prompt+response only at DEBUG
+            logger.debug("inference #%d messages_sent=%r", idx, messages)
+            logger.debug("inference #%d response=%r", idx, completion.text)
+
+        self.sink.write(
+            {
+                "call": idx,
+                "label": self.label,
+                "backend": type(self.inner).__name__,
+                "model": self.model,
+                "latency_s": round(latency, 4),
+                "sampling": sampling or None,
+                "usage": completion.usage,
+                "messages_sent": messages,  # the exact prompt sent to the provider
+                "response": completion.text,  # the exact text returned
+            }
+        )
+        return completion

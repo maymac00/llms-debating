@@ -1,38 +1,9 @@
 # Policy Scenario: Street Homelessness in Barcelona
 
-The city of Barcelona faces persistent street homelessness. On any given night
-roughly 1,200 people sleep rough, and several thousand more cycle through
-shelters, occupied buildings, and precarious housing. The causes are entangled:
-a tight and expensive rental market, gaps in mental-health and addiction
-services, irregular migration status that blocks access to formal support, and
-the after-effects of economic shocks.
+Spain faces a deepening homelessness crisis with over 28,500 people experiencing homelessness as of 2022, representing a 24.5% increase since 2012. Among them, 7,277 are sleeping rough on the streets, exposed to the harshest conditions. The situation has intensified following the pandemic, with housing affordability reaching critical levels. Spain now has the highest rent-to-income ratio in the European Union, making decent housing increasingly inaccessible for vulnerable populations.
 
-The municipal government has allocated a constrained budget for the coming year
-and must decide how to spend it. Several directions are on the table, and they
-compete for the same funds:
+The country's social housing stock stands at just 2% of total housing, far below the EU average of 9%, leaving few safety nets for those at risk. Traditional institutional responses rely heavily on emergency shelters and collective accommodation facilities, which often fail to address the root causes of homelessness or provide pathways to stable housing. Women, migrants, young people, and individuals struggling with mental health issues or addictions are particularly affected, facing compounded barriers to securing and maintaining housing.
 
-1. **Housing First** — rapidly place rough sleepers into stable, independent
-   housing with no preconditions (sobriety, treatment), then wrap support
-   services around them.
-2. **Expanded emergency shelter** — more night shelters and day centres,
-   prioritising immediate safety and capacity over permanence.
-3. **Conditional support pathways** — access to subsidised housing contingent
-   on engagement with treatment, training, or work programmes.
-4. **Enforcement and dispersal** — fines, removal of encampments, and
-   restrictions on rough sleeping in central districts, framed as protecting
-   public space.
-5. **Prevention** — rent subsidies, eviction mediation, and emergency cash
-   transfers aimed at people at risk *before* they lose housing.
+The homelessness response system is fragmented across national, regional, and municipal levels, creating coordination challenges and service gaps. Local authorities often lack sufficient funding to meet growing demand, while institutional practices remain anchored in outdated models that prioritize temporary shelter over permanent housing solutions. The absence of a reliable national data system makes it difficult to track the full scale of the crisis or identify effective interventions.
 
-Constraints and tensions to weigh:
-
-- The budget cannot fund all options at scale; trade-offs are unavoidable.
-- Residents and businesses in central districts are pressing for visible,
-  fast results.
-- A significant share of rough sleepers are undocumented migrants with no
-  right to most formal housing programmes.
-- Outcomes will be judged both on measurable reductions in rough sleeping and
-  on whether the response is seen as just and humane.
-
-**Your task:** Propose a concrete policy direction (it may combine elements)
-and justify it from the standpoint of your conceptual framework.
+Housing costs continue to rise, pushing more households to the brink while thousands remain trapped in cycles of street homelessness, unable to access the support needed to rebuild stable lives.

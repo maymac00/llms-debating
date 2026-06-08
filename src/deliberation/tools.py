@@ -46,10 +46,32 @@ def build_default_tools(transcript: Transcript) -> list[Tool]:
             }
             for t in turns
         ]
-        return json.dumps({"query": query, "matches": payload}, ensure_ascii=False)
+        result: dict[str, Any] = {"query": query, "matches": payload}
+        if not payload:
+            # An empty result is final for this turn (the transcript does not change
+            # mid-turn). Say *why* it is empty so the model does not just retry.
+            has_turns = any(rnd.turns for rnd in transcript.rounds)
+            result["note"] = (
+                "The deliberation has not started — there are no turns to search "
+                "yet. Reason from your framework and make your proposal."
+                if not has_turns
+                else f"No turn so far mentions {query!r}; repeating returns the same. "
+                "Try a different term or finalise."
+            )
+        return json.dumps(result, ensure_ascii=False)
 
     def _list_proposals() -> str:
-        return json.dumps(transcript.latest_proposals(), ensure_ascii=False)
+        latest = transcript.latest_proposals()
+        if not latest:  # a bare {} is ambiguous on its own — explain what it means
+            return json.dumps(
+                {
+                    "proposals": {},
+                    "note": "No proposals yet — no one has spoken. You are opening "
+                    "the deliberation; make your proposal.",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(latest, ensure_ascii=False)
 
     return [
         Tool(
@@ -57,7 +79,8 @@ def build_default_tools(transcript: Transcript) -> list[Tool]:
             description=(
                 "Search the deliberation transcript so far. Case-insensitive "
                 "substring match over every turn's proposal and justification. "
-                "Returns the matching turns as JSON."
+                "Returns the matching turns as JSON. Early in the deliberation it "
+                "may return no matches — that is expected, not an error to retry."
             ),
             schema={
                 "type": "object",
@@ -75,7 +98,8 @@ def build_default_tools(transcript: Transcript) -> list[Tool]:
             name="list_proposals",
             description=(
                 "List each agent's most recent proposal as a JSON object mapping "
-                "cf_id to proposal text. Takes no arguments."
+                "cf_id to proposal text. Takes no arguments. Returns an empty set "
+                "before anyone has proposed (e.g. the opening turn)."
             ),
             schema={"type": "object", "properties": {}, "required": []},
             fn=_list_proposals,
