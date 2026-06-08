@@ -68,4 +68,4 @@ src/deliberation/
 ## Scope
 
 In scope: the deliberation core only. **Out of scope** (clean seams left):
-voting/aggregation, scorers, RL training. See `Software_requirements.md` §13.
+voting/aggregation, scorers, RL training.

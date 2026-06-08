@@ -62,7 +62,7 @@ def build_agents(config: dict[str, Any]) -> list[CFAgent]:
     for entry in config["agents"]:
         backend = make_backend(resolve_backend_spec(entry, run_default))
         agent = load_agent(entry["path"], backend)
-        # Config 'turn' overrides agent.yaml (§9); applied after load_agent.
+        # Config 'turn' overrides agent.yaml; applied after load_agent.
         turn_cfg = entry.get("turn", {}) or {}
         if "max_calls" in turn_cfg:
             agent.max_calls = int(turn_cfg["max_calls"])

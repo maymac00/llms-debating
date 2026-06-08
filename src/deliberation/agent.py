@@ -28,7 +28,7 @@ DEFAULT_MAX_CALLS = 5
 
 
 # --------------------------------------------------------------------------- #
-# Action parsing (§10.1) — centralised in one helper.
+# Action parsing — centralised in one helper.
 # --------------------------------------------------------------------------- #
 @dataclass
 class ParsedAction:
@@ -196,7 +196,7 @@ class CFAgent:
             "agents (your tool use and reasoning stay private)."
         )
 
-    # -- the capped, agent-decided loop (§10.4) -------------------------
+    # -- the capped, agent-decided loop ----------------------------------
     async def act(self, transcript: Transcript, round_idx: int) -> Turn:
         tools = self._build_tools(transcript)
         tools_by_name = {t.name: t for t in tools}
@@ -246,7 +246,7 @@ class CFAgent:
                 logger.info("[%s r%d] finalised after %d call(s)", self.cf_id, round_idx, n_calls)
                 break
 
-            # ----- forced finalise (last call): final or §10.1 fallback -----
+            # ----- forced finalise (last call): final or fallback -----
             if forced:
                 cap_hit = True
                 if action.kind == "final":
@@ -255,7 +255,7 @@ class CFAgent:
                     status = "ok"
                 else:
                     # Could not parse a clean final: keep the raw text as the
-                    # proposal, leave justification empty (§10.1 fallback).
+                    # proposal, leave justification empty (fallback).
                     proposal = completion.text.strip()
                     justification = ""
                     status = "fallback"
@@ -338,7 +338,7 @@ class CFAgent:
         )
         try:
             return await self.backend.generate(messages)
-        except Exception as exc:  # add context, then surface (§10.2)
+        except Exception as exc:  # add context, then surface
             raise RuntimeError(
                 f"backend.generate failed for agent={self.cf_id} round={round_idx} "
                 f"call_index={call_index}: {exc}"
@@ -390,7 +390,7 @@ class CFAgent:
 
 
 # --------------------------------------------------------------------------- #
-# Folder loader (§5.4)
+# Folder loader
 # --------------------------------------------------------------------------- #
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Split optional ``---`` YAML frontmatter from a markdown body."""

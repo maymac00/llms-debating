@@ -1,6 +1,6 @@
 """Smoke tests with a scripted stub backend — no network.
 
-Covers Definition of Done §8:
+Covers the core agent-loop contract:
   (a) search-once-then-finalise: SEARCH llm -> SEARCH tool -> FINALISE, in order;
   (b) never-finalise: exactly max_calls backend calls, a forced FINALISE, and a
       valid (possibly fallback) proposal;
@@ -82,7 +82,7 @@ def test_search_then_finalise() -> None:
         ("tool", StepLabel.SEARCH),
         ("llm", StepLabel.FINALISE),
     ]
-    # The tool step immediately follows its deciding llm step (DoD §5).
+    # The tool step immediately follows its deciding llm step.
     assert turn.steps[1].tool_name == "search"
     assert turn.steps[1].tool_input == {"query": "housing"}
     assert turn.proposal == "Housing First"
@@ -119,7 +119,7 @@ def test_never_finalises_forces_finalise() -> None:
     assert turn.justification == ""
     assert turn.metadata["cap_hit"] is True
 
-    # No turn exceeds max_calls backend calls (DoD §4).
+    # No turn exceeds max_calls backend calls.
     assert turn.metadata["n_backend_calls"] <= max_calls
 
     for step in llm_steps:
