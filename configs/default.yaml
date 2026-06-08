@@ -1,0 +1,16 @@
+scenario: scenarios/homelessness_bcn.md
+T: 3
+protocol:
+  type: round_robin
+  order: fixed
+agents:
+  - path: agents/aristotle
+    backend: { provider: litellm, model: anthropic/claude-haiku-4-5-20251001 }
+
+    #backend: { provider: litellm, model: anthropic/claude-haiku-4-5-20251001 }
+    #turn: { max_calls: 5, tools: [search, list_proposals] }
+  - path: agents/mill
+    backend: { provider: litellm, model: anthropic/claude-haiku-4-5-20251001 }
+  - path: agents/confucius
+    backend: { provider: vllm, base_url: http://10.147.1.1:8004/v1, model: QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ }
+output: outputs/transcript.jsonl

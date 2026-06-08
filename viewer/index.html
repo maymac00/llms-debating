@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Deliberation Viewer</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #374151;
+    --maxw: 840px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  /* --- top bar --- */
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line);
+  }
+  .bar {
+    max-width: var(--maxw); margin: 0 auto; padding: 10px 16px;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .title { font-weight: 700; font-size: 16px; letter-spacing: .2px; margin-right: auto; }
+  .title small { color: var(--muted); font-weight: 500; margin-left: 8px; }
+  select, .btn {
+    font: inherit; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+  }
+  select { max-width: 280px; }
+  .btn:hover { background: #f0f1f3; }
+
+  /* --- page --- */
+  main { max-width: var(--maxw); margin: 0 auto; padding: 20px 16px 120px; }
+
+  .scenario {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 24px;
+  }
+  .scenario h1 { font-size: 18px; margin: 0; }
+  .scenario .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .scenario details { margin-top: 10px; }
+  .scenario summary {
+    cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 600;
+    list-style: none; user-select: none;
+  }
+  .scenario summary::-webkit-details-marker { display: none; }
+  .scenario summary::before { content: "▸ "; }
+  .scenario details[open] summary::before { content: "▾ "; }
+  .scenario .body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+
+  /* --- round divider --- */
+  .round-sep { display: flex; align-items: center; gap: 12px; margin: 28px 0 18px; }
+  .round-sep::before, .round-sep::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .round-sep span {
+    font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--muted); background: var(--bg); padding: 0 4px;
+  }
+
+  /* --- message --- */
+  .msg {
+    display: flex; gap: 12px; margin: 0 0 16px;
+  }
+  .avatar {
+    flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 15px; margin-top: 2px;
+  }
+  .bubble {
+    flex: 1 1 auto; min-width: 0;
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 4px solid var(--spk, #888);
+    border-radius: 10px; padding: 12px 16px;
+  }
+  .who { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .who .name { font-weight: 700; color: var(--spk, #333); }
+  .who .meta { color: var(--muted); font-size: 12px; }
+
+  .label {
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); margin: 12px 0 4px;
+  }
+  .proposal {
+    background: var(--spk-soft, #f3f4f6); border-radius: 8px; padding: 8px 12px;
+  }
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md p { margin: 8px 0; }
+  .md h3, .md h4, .md h5 { margin: 12px 0 6px; font-size: 14px; }
+  .md ul, .md ol { margin: 8px 0; padding-left: 22px; }
+  .md li { margin: 2px 0; }
+  .md code { background: #eef0f2; border-radius: 4px; padding: 1px 5px; font-size: 13px; }
+  .justif { color: #2a2f36; }
+
+  /* --- empty / drop state --- */
+  .empty {
+    text-align: center; color: var(--muted); padding: 60px 20px;
+    border: 2px dashed var(--line); border-radius: 14px; background: var(--panel);
+  }
+  .empty strong { color: var(--ink); }
+  .drag-over { border-color: var(--accent); background: #eef1f4; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="title">Deliberation Viewer <small id="count"></small></div>
+    <select id="picker" class="hidden" title="Choose a transcript"></select>
+    <label class="btn">Open file…<input id="file" type="file" accept=".jsonl,.json" class="hidden"></label>
+  </div>
+</header>
+
+<main id="main">
+  <div class="empty" id="empty">
+    <p><strong>No transcript loaded.</strong></p>
+    <p>Drag a <code>.jsonl</code> transcript here, or use <em>Open file…</em>.<br>
+       Or run <code>python viewer/serve.py</code> to browse <code>outputs/</code> automatically.</p>
+  </div>
+  <div id="view"></div>
+</main>
+
+<script>
+"use strict";
+
+const els = {
+  picker: document.getElementById("picker"),
+  file: document.getElementById("file"),
+  view: document.getElementById("view"),
+  empty: document.getElementById("empty"),
+  count: document.getElementById("count"),
+  main: document.getElementById("main"),
+};
+
+let agentNames = {}; // cf_id -> display_name (best effort, from server)
+
+/* ---------- helpers ---------- */
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Tiny, safe-ish markdown: escape first, then apply a small subset.
+function inlineMd(s) {
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+function renderMd(src) {
+  const lines = escapeHtml(src == null ? "" : src).split("\n");
+  let html = "", list = null;
+  const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
+  for (const line of lines) {
+    let m;
+    if ((m = line.match(/^\s*(#{1,6})\s+(.*)$/))) {
+      closeList();
+      const lvl = Math.min(5, m[1].length + 2);
+      html += `<h${lvl}>${inlineMd(m[2])}</h${lvl}>`;
+    } else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) {
+      if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; }
+      html += `<li>${inlineMd(m[1])}</li>`;
+    } else if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
+      if (list !== "ol") { closeList(); html += "<ol>"; list = "ol"; }
+      html += `<li>${inlineMd(m[1])}</li>`;
+    } else if (line.trim() === "") {
+      closeList();
+    } else {
+      closeList();
+      html += `<p>${inlineMd(line)}</p>`;
+    }
+  }
+  closeList();
+  return html;
+}
+
+// Deterministic colour per speaker so they're easy to track.
+function hueFor(id) {
+  let h = 0;
+  for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+}
+function nameFor(id) {
+  if (agentNames[id]) return agentNames[id];
+  return String(id).charAt(0).toUpperCase() + String(id).slice(1);
+}
+
+/* ---------- parsing ---------- */
+function parseTranscript(text) {
+  const lines = text.split("\n").filter(l => l.trim() !== "");
+  if (!lines.length) throw new Error("empty transcript");
+  const header = JSON.parse(lines[0]);
+  const rounds = lines.slice(1).map(l => JSON.parse(l));
+  rounds.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  return { scenario: header.scenario || "", rounds };
+}
+
+/* ---------- rendering ---------- */
+function render(t) {
+  els.empty.classList.add("hidden");
+  const out = [];
+
+  // scenario
+  const sc = t.scenario || "";
+  const titleMatch = sc.match(/^#\s+(.*)$/m);
+  const title = titleMatch ? titleMatch[1] : "Scenario";
+  out.push(`<section class="scenario">
+    <h1>${escapeHtml(title)}</h1>
+    <div class="sub">${t.rounds.length} round${t.rounds.length === 1 ? "" : "s"} · ${countSpeakers(t)} agents</div>
+    <details>
+      <summary>Show full scenario</summary>
+      <div class="body md">${renderMd(sc)}</div>
+    </details>
+  </section>`);
+
+  // rounds in order
+  for (const rnd of t.rounds) {
+    out.push(`<div class="round-sep"><span>Round ${(rnd.index ?? 0) + 1}</span></div>`);
+    for (const turn of (rnd.turns || [])) {
+      out.push(renderTurn(turn));
+    }
+  }
+
+  els.view.innerHTML = out.join("\n");
+}
+
+function countSpeakers(t) {
+  const s = new Set();
+  for (const r of t.rounds) for (const tr of (r.turns || [])) s.add(tr.cf_id);
+  return s.size;
+}
+
+function renderTurn(turn) {
+  const id = turn.cf_id || "?";
+  const hue = hueFor(id);
+  const spk = `hsl(${hue} 60% 38%)`;
+  const soft = `hsl(${hue} 60% 96%)`;
+  const initial = escapeHtml(nameFor(id).charAt(0).toUpperCase());
+  const steps = Array.isArray(turn.steps) ? turn.steps : [];
+  const llmCalls = steps.filter(s => s.kind === "llm").length;
+  const toolCalls = steps.filter(s => s.kind === "tool").length;
+  const metaBits = [`round ${ (turn.round_idx ?? 0) + 1 }`];
+  if (llmCalls) metaBits.push(`${llmCalls} model call${llmCalls === 1 ? "" : "s"}`);
+  if (toolCalls) metaBits.push(`${toolCalls} tool use${toolCalls === 1 ? "" : "s"}`);
+
+  return `<div class="msg" style="--spk:${spk};--spk-soft:${soft}">
+    <div class="avatar" style="background:${spk}">${initial}</div>
+    <div class="bubble">
+      <div class="who">
+        <span class="name">${escapeHtml(nameFor(id))}</span>
+        <span class="meta">${escapeHtml(metaBits.join(" · "))}</span>
+      </div>
+      <div class="label">Proposal</div>
+      <div class="proposal md">${renderMd(turn.proposal)}</div>
+      <div class="label">Justification</div>
+      <div class="justif md">${renderMd(turn.justification)}</div>
+    </div>
+  </div>`;
+}
+
+/* ---------- loading ---------- */
+async function loadUrl(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url}: ${res.status}`);
+  const text = await res.text();
+  render(parseTranscript(text));
+}
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try { render(parseTranscript(reader.result)); }
+    catch (e) { alert("Could not parse transcript: " + e.message); }
+  };
+  reader.readAsText(file);
+}
+
+/* ---------- server-assisted discovery (optional) ---------- */
+async function initFromServer() {
+  // Display names (best effort — viewer still works without them).
+  try {
+    const a = await fetch("/api/agents");
+    if (a.ok) agentNames = await a.json();
+  } catch (_) {}
+
+  // Transcript list -> dropdown.
+  try {
+    const r = await fetch("/api/transcripts");
+    if (!r.ok) return false;
+    const items = await r.json();
+    if (!items.length) return false;
+    els.picker.innerHTML = items
+      .map(it => `<option value="${escapeHtml(it.url)}">${escapeHtml(it.name)}</option>`)
+      .join("");
+    els.picker.classList.remove("hidden");
+    els.count.textContent = `· ${items.length} transcript${items.length === 1 ? "" : "s"}`;
+    els.picker.addEventListener("change", () => loadUrl(els.picker.value).catch(err => alert(err.message)));
+    await loadUrl(els.picker.value);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/* ---------- wiring ---------- */
+els.file.addEventListener("change", e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+
+["dragenter", "dragover"].forEach(ev =>
+  els.main.addEventListener(ev, e => { e.preventDefault(); els.empty.classList.add("drag-over"); }));
+["dragleave", "drop"].forEach(ev =>
+  els.main.addEventListener(ev, e => { e.preventDefault(); els.empty.classList.remove("drag-over"); }));
+els.main.addEventListener("drop", e => {
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+(async function start() {
+  const params = new URLSearchParams(location.search);
+  // Always try to fetch display names even for ?file= loads.
+  try { const a = await fetch("/api/agents"); if (a.ok) agentNames = await a.json(); } catch (_) {}
+  if (params.get("file")) {
+    loadUrl(params.get("file")).catch(err => alert(err.message));
+    return;
+  }
+  await initFromServer();
+})();
+</script>
+</body>
+</html>
