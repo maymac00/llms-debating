@@ -1,16 +1,22 @@
-scenario: scenarios/homelessness_bcn.md
+scenario: scenarios/homelessness_bcn_explicit.md
 T: 3
 protocol:
   type: round_robin
-  order: fixed
+  order: shuffle
 agents:
+  # `temperature` is a per-agent sampling knob; any extra backend key is passed
+  # through to the provider. Omit it to fall back to DEFAULT_TEMPERATURE (0.7).
+  # Keep it well above 0 so agents don't collapse to near-identical proposals.
   - path: agents/aristotle
-    backend: { provider: litellm, model: anthropic/claude-haiku-4-5-20251001 }
-
-    #backend: { provider: litellm, model: anthropic/claude-haiku-4-5-20251001 }
-    #turn: { max_calls: 5, tools: [search, list_proposals] }
+    backend: { provider: litellm, model: anthropic/claude-sonnet-4-6, temperature: 0.7 }
+    turn: { max_calls: 5, tools: [search, list_proposals] }
   - path: agents/mill
-    backend: { provider: litellm, model: anthropic/claude-haiku-4-5-20251001 }
+    backend: { provider: litellm, model: anthropic/claude-sonnet-4-6, temperature: 0.7 }
+    turn: { max_calls: 5, tools: [search, list_proposals] }
+ 
   - path: agents/confucius
-    backend: { provider: vllm, base_url: http://10.147.1.1:8004/v1, model: QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ }
-output: outputs/transcript.jsonl
+    #backend: { provider: vllm, base_url: http://10.147.1.1:8004/v1, model: QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ, temperature: 0.7 }
+    backend: { provider: litellm, model: anthropic/claude-sonnet-4-6, temperature: 0.7 }
+    turn: { max_calls: 5, tools: [search, list_proposals] }
+ 
+output: outputs/transcript_explicit.jsonl
