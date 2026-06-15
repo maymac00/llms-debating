@@ -23,6 +23,13 @@ from .models import Completion
 
 logger = logging.getLogger(__name__)
 
+# Default sampling temperature applied by every backend unless the spec overrides
+# it. Deliberately non-greedy: near-greedy decoding on a single shared model with
+# a consensus-magnet scenario makes near-identical proposals across agents almost
+# inevitable, collapsing the deliberation. Override per agent with ``temperature``
+# in the backend spec (config or agent.yaml).
+DEFAULT_TEMPERATURE = 0.7
+
 
 @runtime_checkable
 class Backend(Protocol):
@@ -72,7 +79,8 @@ class LiteLLMBackend:
 
     Credentials are read from environment variables by LiteLLM; keys are never
     hard-coded. ``logprobs``/``token_ids`` are left ``None`` unless the provider
-    returns them.
+    returns them. Sampling ``temperature`` defaults to :data:`DEFAULT_TEMPERATURE`
+    when the spec does not set one.
     """
 
     def __init__(
@@ -86,6 +94,7 @@ class LiteLLMBackend:
         self.model = model
         self.max_retries = max_retries
         self.base_delay = base_delay
+        default_sampling.setdefault("temperature", DEFAULT_TEMPERATURE)
         self.default_sampling = default_sampling
 
     async def generate(self, messages: list[dict[str, Any]], **sampling: Any) -> Completion:
@@ -136,7 +145,8 @@ class VLLMBackend:
     path, so no extra dependency is required; it may populate
     ``logprobs``/``token_ids`` when the server returns them. If no server is
     reachable, ``generate`` raises like any other backend — the class and
-    constructor signature exist regardless.
+    constructor signature exist regardless. Sampling ``temperature`` defaults to
+    :data:`DEFAULT_TEMPERATURE` when the spec does not set one.
     """
 
     def __init__(
@@ -154,6 +164,7 @@ class VLLMBackend:
         self.api_key = api_key
         self.max_retries = max_retries
         self.base_delay = base_delay
+        default_sampling.setdefault("temperature", DEFAULT_TEMPERATURE)
         self.default_sampling = default_sampling
 
     async def generate(self, messages: list[dict[str, Any]], **sampling: Any) -> Completion:

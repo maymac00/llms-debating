@@ -35,13 +35,13 @@ class Completion(BaseModel):
 class StepLabel(StrEnum):
     """Controlled vocabulary for the action a Step represents.
 
-    Tied to the skill taxonomy so Steps are independently scoreable later. Tool
-    names match a member's value (lowercased), e.g. the ``search`` tool maps to
-    :attr:`StepLabel.SEARCH`. New members may be added without schema changes
-    anywhere else.
+    Tied to the skill taxonomy so Steps are independently scoreable later. New
+    members may be added without schema changes anywhere else.
     """
 
-    # --- required minimum ---
+    # FINALISE is the only label the current single-call turn produces. SEARCH
+    # and LIST_PROPOSALS are kept so transcripts recorded by the pre-refactor
+    # tool loop still deserialise (see implement_skills.md).
     SEARCH = "search"
     LIST_PROPOSALS = "list_proposals"
     FINALISE = "finalise"
@@ -149,12 +149,12 @@ class Transcript(BaseModel):
     def _iter_turns(self) -> list[Turn]:
         return [turn for rnd in self.rounds for turn in rnd.turns]
 
-    # --- tool-backing pure functions (zero API spend) -------------------
+    # --- pure analysis reads (zero API spend) ---------------------------
     def search(self, query: str, cf_id: str | None = None) -> list[Turn]:
         """Substring (case-insensitive) match over proposals + justifications.
 
-        Pure function, no model call. Backs the ``search`` tool. ``cf_id``
-        optionally restricts the search to one agent's turns.
+        Pure function, no model call. ``cf_id`` optionally restricts the search
+        to one agent's turns.
         """
         needle = query.casefold()
         results: list[Turn] = []
@@ -167,7 +167,7 @@ class Transcript(BaseModel):
         return results
 
     def latest_proposals(self) -> dict[str, str]:
-        """Each agent's most recent proposal. Backs the ``list_proposals`` tool."""
+        """Each agent's most recent proposal."""
         latest: dict[str, str] = {}
         for turn in self._iter_turns():  # chronological; later overwrites earlier
             latest[turn.cf_id] = turn.proposal

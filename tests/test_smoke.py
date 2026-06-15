@@ -1,10 +1,11 @@
 """Smoke tests with a scripted stub backend — no network.
 
-Covers the core agent-loop contract:
-  (a) search-once-then-finalise: SEARCH llm -> SEARCH tool -> FINALISE, in order;
-  (b) never-finalise: exactly max_calls backend calls, a forced FINALISE, and a
-      valid (possibly fallback) proposal;
-plus messages_sent non-empty on every llm step, and a lossless JSONL round-trip.
+Covers the single-call turn contract:
+  (a) a clean JSON reply parses into proposal/justification and is recorded as
+      one FINALISE llm Step with its exact prompt;
+  (b) an unparseable reply falls back to the raw text as the proposal;
+plus blind round 0, private-step exclusion from shared context, and a lossless
+JSONL round-trip.
 """
 
 from __future__ import annotations
@@ -13,8 +14,8 @@ import asyncio
 import json
 from typing import Any
 
-from deliberation.agent import CFAgent
-from deliberation.models import Completion, StepLabel, Transcript
+from deliberation.agent import CFAgent, parse_proposal
+from deliberation.models import Completion, Round, Step, StepLabel, Transcript, Turn
 
 
 class StubBackend:
@@ -32,20 +33,13 @@ class StubBackend:
         return Completion(text=text)
 
 
-def _agent(backend: StubBackend, **kw: Any) -> CFAgent:
-    return CFAgent(
-        cf_id="tester",
-        system_prompt="You are a test agent.",
-        backend=backend,
-        **kw,
-    )
+def _agent(backend: StubBackend) -> CFAgent:
+    return CFAgent(cf_id="tester", system_prompt="You are a test agent.", backend=backend)
 
 
 def _seed_transcript() -> Transcript:
-    """A transcript with one prior turn so search() has something to match."""
+    """A transcript with one prior turn carrying a private step."""
     t = Transcript(scenario="Test scenario about housing policy.")
-    from deliberation.models import Round, Step, Turn
-
     prior = Turn(
         cf_id="other",
         round_idx=0,
@@ -64,79 +58,54 @@ def _seed_transcript() -> Transcript:
     return t
 
 
-def test_search_then_finalise() -> None:
+def test_single_call_turn() -> None:
     backend = StubBackend(
-        [
-            json.dumps({"tool": "search", "input": {"query": "housing"}}),
-            json.dumps({"final": {"proposal": "Housing First", "justification": "It works."}}),
-        ]
+        [json.dumps({"proposal": "Housing First", "justification": "It works."})]
     )
-    agent = _agent(backend, max_calls=5)
+    agent = _agent(backend)
     transcript = _seed_transcript()
 
     turn = asyncio.run(agent.act(transcript, round_idx=1))
 
-    # SEARCH llm step -> SEARCH tool step -> FINALISE llm step, in order.
-    assert [(s.kind, s.label) for s in turn.steps] == [
-        ("llm", StepLabel.SEARCH),
-        ("tool", StepLabel.SEARCH),
-        ("llm", StepLabel.FINALISE),
-    ]
-    # The tool step immediately follows its deciding llm step.
-    assert turn.steps[1].tool_name == "search"
-    assert turn.steps[1].tool_input == {"query": "housing"}
+    # Exactly one backend call, recorded as one FINALISE llm step.
+    assert backend.calls == 1
+    assert [(s.kind, s.label) for s in turn.steps] == [("llm", StepLabel.FINALISE)]
     assert turn.proposal == "Housing First"
     assert turn.justification == "It works."
-    assert turn.metadata["n_backend_calls"] == 2
-    assert turn.metadata["cap_hit"] is False
+    assert turn.metadata["n_backend_calls"] == 1
+    assert turn.metadata["parse_status"] == "ok"
 
-    # messages_sent non-empty on every llm step.
-    for step in turn.steps:
-        if step.kind == "llm":
-            assert step.messages_sent
-
-
-def test_never_finalises_forces_finalise() -> None:
-    # The stub always asks to search; it never volunteers a final.
-    backend = StubBackend([json.dumps({"tool": "search", "input": {"query": "x"}})])
-    max_calls = 3
-    agent = _agent(backend, max_calls=max_calls)
-    transcript = _seed_transcript()
-
-    turn = asyncio.run(agent.act(transcript, round_idx=1))
-
-    # Exactly max_calls backend (llm) calls.
-    assert backend.calls == max_calls
-    llm_steps = [s for s in turn.steps if s.kind == "llm"]
-    assert len(llm_steps) == max_calls
-
-    # Forced FINALISE on the last call, with a valid (fallback) proposal.
-    last = turn.steps[-1]
-    assert last.kind == "llm"
-    assert last.label == StepLabel.FINALISE
-    assert last.metadata["parse_status"] == "fallback"
-    assert turn.proposal  # non-empty fallback (the raw text)
-    assert turn.justification == ""
-    assert turn.metadata["cap_hit"] is True
-
-    # No turn exceeds max_calls backend calls.
-    assert turn.metadata["n_backend_calls"] <= max_calls
-
-    for step in llm_steps:
-        assert step.messages_sent
+    # The step keeps the exact prompt, which includes the prior shared turn.
+    step = turn.steps[0]
+    assert step.messages_sent
+    blob = json.dumps(step.messages_sent)
+    assert "Build more housing." in blob  # shared context present
+    assert step.completion is not None
 
 
-def test_finalise_immediately() -> None:
-    backend = StubBackend(
-        [json.dumps({"final": {"proposal": "P", "justification": "J"}})]
+def test_legacy_final_wrapper_accepted() -> None:
+    assert parse_proposal(json.dumps({"final": {"proposal": "P", "justification": "J"}})) == (
+        "P",
+        "J",
     )
-    agent = _agent(backend, max_calls=5)
+    # JSON wrapped in prose / fences still parses.
+    assert parse_proposal('Sure!\n```json\n{"proposal": "P", "justification": "J"}\n```') == (
+        "P",
+        "J",
+    )
+
+
+def test_unparseable_reply_falls_back_to_raw_text() -> None:
+    backend = StubBackend(["I refuse to emit JSON, but here is my opinion."])
+    agent = _agent(backend)
+
     turn = asyncio.run(agent.act(Transcript(scenario="S"), round_idx=0))
 
     assert backend.calls == 1
-    assert [(s.kind, s.label) for s in turn.steps] == [("llm", StepLabel.FINALISE)]
-    assert turn.proposal == "P"
-    assert turn.final_completion is not None
+    assert turn.proposal == "I refuse to emit JSON, but here is my opinion."
+    assert turn.justification == ""
+    assert turn.metadata["parse_status"] == "fallback"
+    assert turn.steps[0].metadata["parse_status"] == "fallback"
 
 
 def test_as_messages_excludes_private_steps() -> None:
@@ -148,15 +117,42 @@ def test_as_messages_excludes_private_steps() -> None:
     assert '"content": "x"' not in blob  # private step prompt is not
 
 
+def test_round0_blind_then_sees_prior() -> None:
+    """Round 0 is blind (no agent sees another's opening); round 1 sees them all."""
+    from deliberation.protocols import RoundRobin
+
+    def _proposer(name: str) -> CFAgent:
+        backend = StubBackend(
+            [json.dumps({"proposal": f"P-{name}", "justification": f"J-{name}"})]
+        )
+        return CFAgent(cf_id=name, system_prompt="t", backend=backend)
+
+    agents = [_proposer("alice"), _proposer("bob")]
+    transcript = asyncio.run(RoundRobin(order="fixed").run(agents, scenario="S", T=2))
+
+    def _prompt_blob(turn: Any) -> str:
+        return json.dumps(turn.steps[0].messages_sent)
+
+    # Round 0: no agent's prompt contains another agent's round-0 proposal.
+    r0 = transcript.round(0)
+    for turn in r0.turns:
+        blob = _prompt_blob(turn)
+        for other in r0.turns:
+            if other.cf_id != turn.cf_id:
+                assert other.proposal not in blob  # blind to peers' openings
+
+    # Round 1: each agent now sees both round-0 proposals.
+    for turn in transcript.round(1).turns:
+        blob = _prompt_blob(turn)
+        assert "P-alice" in blob and "P-bob" in blob
+
+
 def test_jsonl_roundtrip(tmp_path: Any) -> None:
     # Produce a real transcript via the loop, then round-trip it.
     backend = StubBackend(
-        [
-            json.dumps({"tool": "search", "input": {"query": "housing"}}),
-            json.dumps({"final": {"proposal": "Housing First", "justification": "It works."}}),
-        ]
+        [json.dumps({"proposal": "Housing First", "justification": "It works."})]
     )
-    agent = _agent(backend, max_calls=5)
+    agent = _agent(backend)
     transcript = _seed_transcript()
     turn = asyncio.run(agent.act(transcript, round_idx=1))
     transcript.append(turn)
@@ -168,3 +164,33 @@ def test_jsonl_roundtrip(tmp_path: Any) -> None:
     # Lossless including all steps.
     assert restored == transcript
     assert restored.rounds[-1].turns[-1].steps == turn.steps
+
+
+def test_old_transcripts_with_tool_steps_still_load(tmp_path: Any) -> None:
+    """Transcripts recorded by the pre-refactor tool loop must still deserialise."""
+    t = Transcript(scenario="S")
+    t.add_round(
+        Round(
+            index=0,
+            turns=[
+                Turn(
+                    cf_id="old",
+                    round_idx=0,
+                    proposal="P",
+                    justification="J",
+                    steps=[
+                        Step(
+                            kind="tool",
+                            label=StepLabel.SEARCH,
+                            tool_name="search",
+                            tool_input={"query": "housing"},
+                            tool_result="{}",
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    path = str(tmp_path / "old.jsonl")
+    t.to_jsonl(path)
+    assert Transcript.from_jsonl(path) == t

@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 _ENV_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 
+def load_env_file() -> None:
+    """Load a project ``.env`` into the process environment (best effort).
+
+    Keys live in ``.env`` so the same file works in a terminal and in an IDE
+    run config without manual exporting. Existing environment variables win
+    (``override=False``): a value set in the real environment or an IDE
+    run-config field takes precedence over ``.env``. Missing file or missing
+    ``python-dotenv`` is tolerated silently so the CLI still runs.
+    """
+    try:
+        from dotenv import find_dotenv, load_dotenv  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - dependency declared but tolerate absence
+        logger.debug("python-dotenv not installed; skipping .env loading")
+        return
+    path = find_dotenv(usecwd=True)  # walk up from CWD (the usual repo-root invocation)
+    if path:
+        load_dotenv(path)
+        logger.debug("loaded environment from %s", path)
+
+
 def expand_env(value: Any) -> Any:
     """Recursively expand ``${VAR}`` / ``${VAR:-default}`` references in a config.
 
@@ -101,14 +121,7 @@ def build_agents(config: dict[str, Any]) -> list[CFAgent]:
         backend = make_backend(resolve_backend_spec(entry, run_default))
         if sink is not None:  # wrap so every inference call is recorded
             backend = LoggingBackend(backend, label=entry["path"], sink=sink)
-        agent = load_agent(entry["path"], backend)
-        # Config 'turn' overrides agent.yaml; applied after load_agent.
-        turn_cfg = entry.get("turn", {}) or {}
-        if "max_calls" in turn_cfg:
-            agent.max_calls = int(turn_cfg["max_calls"])
-        if "tools" in turn_cfg:
-            agent.tool_names = turn_cfg["tools"]
-        agents.append(agent)
+        agents.append(load_agent(entry["path"], backend))
     return agents
 
 
@@ -165,13 +178,16 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    load_env_file()  # make .env keys reach LiteLLM (and ${VAR} expansion below)
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     config = expand_env(config)  # resolve ${VAR} so secrets stay out of the config file
 
     if args.debug_calls or args.debug_log:  # CLI flags turn the debug profile on
         debug = dict(config.get("debug") or {})
         debug["log_inferences"] = True
-        debug["log_path"] = args.debug_log or debug.get("log_path") or "outputs/inference_calls.jsonl"
+        debug["log_path"] = (
+            args.debug_log or debug.get("log_path") or "outputs/inference_calls.jsonl"
+        )
         config["debug"] = debug
 
     asyncio.run(run_deliberation(config))  # thin sync wrapper around the async run

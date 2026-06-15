@@ -24,9 +24,11 @@ class DebateProtocol(Protocol):
 class RoundRobin:
     """Agents act sequentially, in order, for ``T`` rounds.
 
-    Because turns are appended to the transcript as they are produced, each
-    agent's context already includes earlier turns *from the same round*.
-    Speaking order is a known deliberation confound, so it is exposed via
+    Round 0 is *blind*: every agent makes its opening proposal without seeing any
+    other agent's round-0 turn, so first positions form independently rather than
+    anchoring on whoever spoke first. From round 1 on, turns are appended as they
+    are produced, so each agent's context includes earlier turns *from the same
+    round*. Speaking order is a known deliberation confound, so it is exposed via
     ``order``/``seed`` rather than hidden: ``shuffle`` re-randomises the order
     each round using ``seed``.
     """
@@ -50,9 +52,17 @@ class RoundRobin:
                 t,
                 [a.cf_id for a in speaking_order],
             )
-            # Sequential: each turn is appended before the next agent acts, so
-            # later speakers already see earlier turns from this same round.
-            for agent in speaking_order:
-                turn = await agent.act(transcript, t)
-                transcript.append(turn)
+            if t == 0:
+                # Blind round: each agent acts against the still-empty round 0,
+                # so no one sees another's opening proposal. Turns are collected
+                # first and appended only once every agent has proposed.
+                turns = [await agent.act(transcript, t) for agent in speaking_order]
+                for turn in turns:
+                    transcript.append(turn)
+            else:
+                # Sequential: each turn is appended before the next agent acts, so
+                # later speakers already see earlier turns from this same round.
+                for agent in speaking_order:
+                    turn = await agent.act(transcript, t)
+                    transcript.append(turn)
         return transcript

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .agent import CFAgent, load_agent, parse_action
+from .agent import CFAgent, load_agent, parse_proposal
 from .backends import Backend, LiteLLMBackend, VLLMBackend
 from .models import (
     Completion,
@@ -13,7 +13,6 @@ from .models import (
     Turn,
 )
 from .protocols import DebateProtocol, RoundRobin
-from .tools import Tool, build_default_tools
 
 __all__ = [
     "Backend",
@@ -25,11 +24,9 @@ __all__ = [
     "RoundRobin",
     "Step",
     "StepLabel",
-    "Tool",
     "Transcript",
     "Turn",
     "VLLMBackend",
-    "build_default_tools",
     "load_agent",
-    "parse_action",
+    "parse_proposal",
 ]

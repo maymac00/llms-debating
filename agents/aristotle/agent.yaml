@@ -4,6 +4,3 @@ backend:
 skills:                     # ordered list of skill files to compose in
   - justification_writing
   - cross_cf_persuasion
-turn:                       # intra-turn loop config
-  max_calls: 5
-  tools: [search, list_proposals]   # optional subset of the registry; default = all
