@@ -65,4 +65,25 @@ class RoundRobin:
                 for agent in speaking_order:
                     turn = await agent.act(transcript, t)
                     transcript.append(turn)
+                # Dropped-argument convention: a critique from t-1 that its target
+                # did not answer this round is now conceded.
+                _mark_concessions(transcript, t)
         return transcript
+
+
+def _mark_concessions(transcript: Transcript, defending_round: int) -> None:
+    """Mark every critique from ``defending_round - 1`` conceded iff its target did
+    not file a matching :class:`Defense` in ``defending_round``.
+
+    Critiques in the final round are never reached here (no later round answers
+    them), so they keep ``conceded=None`` — unevaluated rather than conceded.
+    """
+    prev = defending_round - 1
+    if prev < 0:
+        return
+    defended = {
+        d.critique_ref for turn in transcript.round(defending_round).turns for d in turn.defenses
+    }
+    for turn in transcript.round(prev).turns:
+        for critique in turn.critiques:
+            critique.conceded = critique.ref not in defended

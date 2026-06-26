@@ -20,6 +20,7 @@ import yaml
 
 from .agent import CFAgent, load_agent, load_agent_meta
 from .backends import Backend, InferenceLog, LiteLLMBackend, LoggingBackend, VLLMBackend
+from .judge import Judge, load_judge, save_verdict
 from .protocols import DebateProtocol, RoundRobin
 
 logger = logging.getLogger(__name__)
@@ -111,11 +112,20 @@ def resolve_backend_spec(
     )
 
 
-def build_agents(config: dict[str, Any]) -> list[CFAgent]:
-    run_default = config.get("backend")  # optional shared fallback backend
+def make_sink(config: dict[str, Any]) -> InferenceLog | None:
+    """The shared debug sink, if the debug profile is on; else ``None``.
+
+    One sink is shared across every wrapped backend in a run (agents *and* the
+    judge), so call indices stay global and ordered.
+    """
     debug = config.get("debug") or {}
-    # Debug profile: one shared sink so call indices are global across agents.
-    sink = InferenceLog(debug.get("log_path")) if debug.get("log_inferences") else None
+    return InferenceLog(debug.get("log_path")) if debug.get("log_inferences") else None
+
+
+def build_agents(config: dict[str, Any], sink: InferenceLog | None = None) -> list[CFAgent]:
+    run_default = config.get("backend")  # optional shared fallback backend
+    if sink is None:  # standalone callers may not pass one; honour the config
+        sink = make_sink(config)
     agents: list[CFAgent] = []
     for entry in config["agents"]:
         backend = make_backend(resolve_backend_spec(entry, run_default))
@@ -123,6 +133,25 @@ def build_agents(config: dict[str, Any]) -> list[CFAgent]:
             backend = LoggingBackend(backend, label=entry["path"], sink=sink)
         agents.append(load_agent(entry["path"], backend))
     return agents
+
+
+def build_judge(
+    config: dict[str, Any], sink: InferenceLog | None = None
+) -> tuple[Judge, str | None] | None:
+    """Build the judge and its output path from a top-level ``judge:`` block.
+
+    Returns ``None`` when the config has no ``judge:`` block (judging is opt-in).
+    The judge's backend honours the same debug-logging wrapper as the agents.
+    """
+    jc = config.get("judge")
+    if not jc:
+        return None
+    backend = make_backend(jc["backend"])
+    if sink is not None:
+        backend = LoggingBackend(backend, label="judge", sink=sink)
+    judge = load_judge(jc["prompt"], backend)
+    output = jc.get("output")  # optional standalone JSON copy; verdict also embeds in transcript
+    return judge, output
 
 
 def build_protocol(config: dict[str, Any]) -> DebateProtocol:
@@ -136,7 +165,8 @@ def build_protocol(config: dict[str, Any]) -> DebateProtocol:
 async def run_deliberation(config: dict[str, Any]) -> None:
     # One config fully determines one run.
     scenario = Path(config["scenario"]).read_text(encoding="utf-8")
-    agents = build_agents(config)
+    sink = make_sink(config)  # shared across agents and judge so call indices stay global
+    agents = build_agents(config, sink)
     protocol = build_protocol(config)
     T = int(config["T"])
 
@@ -148,6 +178,34 @@ async def run_deliberation(config: dict[str, Any]) -> None:
     logger.info("wrote transcript to %s", output)
 
     print(transcript.render())
+
+    # Final step (opt-in): an LLM judge evaluates the finished transcript.
+    built = build_judge(config, sink)
+    if built is not None:
+        judge, verdict_output = built
+        logger.info("judging the deliberation")
+        verdict = await judge.evaluate(transcript)
+        # Embed the verdict in the transcript (so the viewer reads it directly) and
+        # rewrite the transcript; the standalone JSON copy is optional.
+        transcript.verdict = verdict
+        transcript.to_jsonl(output)
+        logger.info(
+            "embedded verdict in %s (parse_status=%s)", output, verdict.parse_status
+        )
+        if verdict_output:
+            save_verdict(verdict, verdict_output)
+            logger.info("wrote verdict to %s", verdict_output)
+
+
+def load_config(config_path: str | Path) -> dict[str, Any]:
+    """Load a run config: pull in ``.env``, parse YAML, then expand ``${VAR}``.
+
+    Shared by the run CLI and the standalone judge CLI so both resolve secrets
+    and env references identically.
+    """
+    load_env_file()  # make .env keys reach LiteLLM (and ${VAR} expansion below)
+    config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    return expand_env(config)  # resolve ${VAR} so secrets stay out of the config file
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -178,9 +236,7 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    load_env_file()  # make .env keys reach LiteLLM (and ${VAR} expansion below)
-    config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    config = expand_env(config)  # resolve ${VAR} so secrets stay out of the config file
+    config = load_config(args.config)
 
     if args.debug_calls or args.debug_log:  # CLI flags turn the debug profile on
         debug = dict(config.get("debug") or {})

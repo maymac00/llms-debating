@@ -79,6 +79,15 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def end_headers(self) -> None:
+        # This is a dev server: never let the browser cache the viewer or the
+        # transcripts, so an edited index.html or a freshly-judged transcript
+        # (e.g. one that just gained a verdict) always shows up on reload.
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
     def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
         if self.path in ("/", "/index.html"):
             self.send_response(302)

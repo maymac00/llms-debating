@@ -104,6 +104,75 @@
   .md code { background: #eef0f2; border-radius: 4px; padding: 1px 5px; font-size: 13px; }
   .justif { color: #2a2f36; }
 
+  /* --- typed turn: Toulmin opening --- */
+  .toulmin { display: grid; gap: 6px; }
+  .t-field { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: start; }
+  .t-key {
+    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); padding-top: 5px;
+  }
+  .t-val { background: var(--spk-soft, #f3f4f6); border-radius: 8px; padding: 5px 10px; }
+
+  /* --- typed turn: clash (critique / defend / revise) --- */
+  .critique {
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
+    margin: 6px 0; background: #fcfcfd;
+  }
+  .c-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; margin-bottom: 4px; }
+  .c-head .arrow { font-weight: 700; color: var(--spk, #333); }
+  .c-head .comp { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .atk, .badge {
+    font-size: 10px; font-weight: 700; border-radius: 999px; padding: 2px 8px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .atk-contest_grounds { background: #e0f2fe; color: #075985; }
+  .atk-contest_warrant { background: #fef9c3; color: #854d0e; }
+  .atk-cf_value_conflict { background: #ede9fe; color: #5b21b6; }
+  .badge.conceded { background: #fee2e2; color: #991b1b; }
+  .badge.answered { background: #dcfce7; color: #166534; }
+  .badge.fallback { background: #fde68a; color: #92400e; }
+  .quote {
+    margin: 4px 0; padding: 3px 12px; border-left: 3px solid var(--spk, #888);
+    color: #374151; font-style: italic; background: #f8f9fb;
+  }
+  .quote p { margin: 0; }
+  .c-arg { color: #2a2f36; }
+  .defense { border-left: 3px solid #cbd5e1; padding: 2px 12px; margin: 6px 0; }
+  .defense .d-ref {
+    font-size: 11px; font-weight: 700; color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .revision { border-radius: 8px; padding: 8px 12px; margin: 6px 0; }
+  .revision.changed { background: #ecfccb; border: 1px solid #bef264; }
+  .revision.held { background: #f3f4f6; border: 1px solid var(--line); }
+  .rev-head {
+    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 4px;
+  }
+
+  /* --- judge verdict --- */
+  .verdict {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    border-top: 4px solid #4338ca; padding: 16px 18px; margin-top: 8px;
+  }
+  .verdict .who { margin-bottom: 4px; }
+  .verdict .who .name { color: #3730a3; }
+  .cf-summary, .divergent {
+    border: 1px solid var(--line); border-left: 4px solid var(--spk, #888);
+    border-radius: 10px; padding: 10px 14px; margin: 8px 0; background: #fcfcfd;
+  }
+  .cf-name { font-weight: 700; color: var(--spk, #333); margin-bottom: 6px; }
+  .consensus-policy { background: #ecfccb; border: 1px solid #bef264; }
+  .concern {
+    display: flex; gap: 10px; align-items: baseline;
+    margin: 6px 0; padding: 6px 10px; border-radius: 8px; background: #f8f9fb;
+  }
+  .concern-by {
+    flex: 0 0 auto; color: #fff; font-weight: 700; font-size: 11px;
+    border-radius: 999px; padding: 2px 9px;
+  }
+  .concern .md { flex: 1 1 auto; min-width: 0; }
+
   /* --- empty / drop state --- */
   .empty {
     text-align: center; color: var(--muted); padding: 60px 20px;
@@ -203,7 +272,7 @@ function parseTranscript(text) {
   const header = JSON.parse(lines[0]);
   const rounds = lines.slice(1).map(l => JSON.parse(l));
   rounds.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-  return { scenario: header.scenario || "", rounds };
+  return { scenario: header.scenario || "", verdict: header.verdict || null, rounds };
 }
 
 /* ---------- rendering ---------- */
@@ -232,6 +301,9 @@ function render(t) {
     }
   }
 
+  // judge's verdict (the final step), when present
+  if (t.verdict) out.push(renderVerdict(t.verdict));
+
   els.view.innerHTML = out.join("\n");
 }
 
@@ -239,6 +311,90 @@ function countSpeakers(t) {
   const s = new Set();
   for (const r of t.rounds) for (const tr of (r.turns || [])) s.add(tr.cf_id);
   return s.size;
+}
+
+// Human-readable attack-type labels (keys match the AttackType enum).
+const ATTACK_LABEL = {
+  contest_grounds: "contests grounds",
+  contest_warrant: "contests warrant",
+  cf_value_conflict: "CF value conflict",
+};
+
+function renderToulmin(t) {
+  const row = (key, val) => val
+    ? `<div class="t-field"><span class="t-key">${key}</span><div class="t-val md">${renderMd(val)}</div></div>`
+    : "";
+  return `<div class="toulmin">
+    ${row("Claim", t.claim)}
+    ${row("Grounds", t.grounds)}
+    ${row("CF-warrant", t.cf_warrant)}
+    ${row("Qualifier", t.qualifier)}
+  </div>`;
+}
+
+function renderCritique(c) {
+  const atk = String(c.attack_type || "");
+  const atkClass = "atk-" + atk.replace(/[^a-z0-9_-]/gi, "");
+  const atkLabel = ATTACK_LABEL[atk] || atk || "critique";
+  let badge = "";
+  if (c.conceded === true) badge = `<span class="badge conceded">conceded</span>`;
+  else if (c.conceded === false) badge = `<span class="badge answered">answered</span>`;
+  return `<div class="critique">
+    <div class="c-head">
+      <span class="arrow">▶ ${escapeHtml(nameFor(c.target_cf))}</span>
+      <span class="atk ${atkClass}">${escapeHtml(atkLabel)}</span>
+      <span class="comp">${escapeHtml(c.target_component || "")}</span>
+      ${badge}
+    </div>
+    <blockquote class="quote md">${renderMd(c.quoted)}</blockquote>
+    <div class="c-arg md">${renderMd(c.argument)}</div>
+  </div>`;
+}
+
+function renderDefense(d) {
+  return `<div class="defense">
+    <span class="d-ref">${escapeHtml(d.critique_ref || "")}</span>
+    <div class="md">${renderMd(d.rebuttal)}</div>
+  </div>`;
+}
+
+function renderRevision(r) {
+  if (r.delta) {
+    const claim = r.revised_claim
+      ? `<div class="proposal md">${renderMd(r.revised_claim)}</div>` : "";
+    return `<div class="revision changed">
+      <div class="rev-head">Revised</div>${claim}
+      <div class="md">${renderMd(r.delta)}</div>
+    </div>`;
+  }
+  return `<div class="revision held">
+    <div class="rev-head">Held position</div>
+    <div class="md">${renderMd(r.rationale || "")}</div>
+  </div>`;
+}
+
+// Body of a turn: the typed structure when present, else the flat proposal +
+// justification (for transcripts predating the typed turn).
+function renderTurnBody(turn) {
+  const toulmin = turn.toulmin && typeof turn.toulmin === "object" ? turn.toulmin : null;
+  const crit = Array.isArray(turn.critiques) ? turn.critiques : [];
+  const defs = Array.isArray(turn.defenses) ? turn.defenses : [];
+  const rev = turn.revision && typeof turn.revision === "object" ? turn.revision : null;
+
+  if (toulmin) {
+    return `<div class="label">Proposal · Toulmin</div>${renderToulmin(toulmin)}`;
+  }
+  if (crit.length || defs.length || rev) {
+    let html = "";
+    if (crit.length) html += `<div class="label">Critiques</div>${crit.map(renderCritique).join("")}`;
+    if (defs.length) html += `<div class="label">Defenses</div>${defs.map(renderDefense).join("")}`;
+    if (rev) html += `<div class="label">Revision</div>${renderRevision(rev)}`;
+    return html;
+  }
+  return `<div class="label">Proposal</div>
+    <div class="proposal md">${renderMd(turn.proposal)}</div>
+    <div class="label">Justification</div>
+    <div class="justif md">${renderMd(turn.justification)}</div>`;
 }
 
 function renderTurn(turn) {
@@ -250,9 +406,14 @@ function renderTurn(turn) {
   const steps = Array.isArray(turn.steps) ? turn.steps : [];
   const llmCalls = steps.filter(s => s.kind === "llm").length;
   const toolCalls = steps.filter(s => s.kind === "tool").length;
+  const meta = turn.metadata || {};
   const metaBits = [`round ${ (turn.round_idx ?? 0) + 1 }`];
-  if (llmCalls) metaBits.push(`${llmCalls} model call${llmCalls === 1 ? "" : "s"}`);
+  // n_backend_calls counts rejection re-samples that a single recorded step hides.
+  const nCalls = meta.n_backend_calls ?? llmCalls;
+  if (nCalls) metaBits.push(`${nCalls} model call${nCalls === 1 ? "" : "s"}`);
   if (toolCalls) metaBits.push(`${toolCalls} tool use${toolCalls === 1 ? "" : "s"}`);
+  const fallback = meta.parse_status === "fallback"
+    ? `<span class="badge fallback">fallback</span>` : "";
 
   return `<div class="msg" style="--spk:${spk};--spk-soft:${soft}">
     <div class="avatar" style="background:${spk}">${initial}</div>
@@ -260,13 +421,86 @@ function renderTurn(turn) {
       <div class="who">
         <span class="name">${escapeHtml(nameFor(id))}</span>
         <span class="meta">${escapeHtml(metaBits.join(" · "))}</span>
+        ${fallback}
       </div>
-      <div class="label">Proposal</div>
-      <div class="proposal md">${renderMd(turn.proposal)}</div>
-      <div class="label">Justification</div>
-      <div class="justif md">${renderMd(turn.justification)}</div>
+      ${renderTurnBody(turn)}
     </div>
   </div>`;
+}
+
+/* ---------- judge verdict ---------- */
+function renderCFSummary(s) {
+  const id = s.cf_id || "?";
+  const hue = hueFor(id);
+  const row = (key, val) => val
+    ? `<div class="t-field"><span class="t-key">${escapeHtml(key)}</span><div class="t-val md">${renderMd(val)}</div></div>`
+    : "";
+  return `<div class="cf-summary" style="--spk:hsl(${hue} 60% 38%);--spk-soft:hsl(${hue} 60% 96%)">
+    <div class="cf-name">${escapeHtml(nameFor(id))}</div>
+    <div class="toulmin">
+      ${row("Opening", s.opening)}
+      ${row("Evolution", s.evolution)}
+      ${row("Final", s.final_position)}
+    </div>
+  </div>`;
+}
+
+function renderDivergent(d) {
+  const id = d.cf_id || "?";
+  const hue = hueFor(id);
+  const concerns = (Array.isArray(d.concerns) ? d.concerns : []).map(c => {
+    const by = c.raised_by || "?";
+    const bh = hueFor(by);
+    return `<div class="concern">
+      <span class="concern-by" style="background:hsl(${bh} 60% 38%)">${escapeHtml(nameFor(by))}</span>
+      <div class="md">${renderMd(c.summary)}</div>
+    </div>`;
+  }).join("");
+  return `<div class="divergent" style="--spk:hsl(${hue} 60% 38%);--spk-soft:hsl(${hue} 60% 96%)">
+    <div class="cf-name">${escapeHtml(nameFor(id))}</div>
+    <div class="proposal md">${renderMd(d.final_proposal)}</div>
+    ${concerns ? `<div class="label">Concerns from other frameworks</div>${concerns}`
+               : `<div class="label">No concerns recorded</div>`}
+  </div>`;
+}
+
+function renderVerdict(v) {
+  if (v.parse_status === "fallback") {
+    return `<div class="round-sep"><span>Judge's Verdict</span></div>
+      <section class="verdict">
+        <div class="who"><span class="name">Judge</span>
+          <span class="badge fallback">unparsed</span></div>
+        <div class="md">${renderMd(v.raw_text || v.debate_summary || "")}</div>
+      </section>`;
+  }
+
+  const badge = v.consensus
+    ? `<span class="badge answered">consensus</span>`
+    : `<span class="badge conceded">no consensus</span>`;
+
+  let body = `<div class="label">How the debate went</div>
+    <div class="md">${renderMd(v.debate_summary)}</div>`;
+
+  const summaries = Array.isArray(v.cf_summaries) ? v.cf_summaries : [];
+  if (summaries.length) {
+    body += `<div class="label">Each framework's arc</div>
+      ${summaries.map(renderCFSummary).join("")}`;
+  }
+
+  if (v.consensus) {
+    body += `<div class="label">Consensus policy</div>
+      <div class="proposal md consensus-policy">${renderMd(v.consensus_policy || "")}</div>`;
+  } else {
+    const divergent = Array.isArray(v.divergent_positions) ? v.divergent_positions : [];
+    body += `<div class="label">Final proposals &amp; their concerns (for a pluralistic choice)</div>
+      ${divergent.map(renderDivergent).join("")}`;
+  }
+
+  return `<div class="round-sep"><span>Judge's Verdict</span></div>
+    <section class="verdict">
+      <div class="who"><span class="name">Judge</span>${badge}</div>
+      ${body}
+    </section>`;
 }
 
 /* ---------- loading ---------- */
@@ -327,6 +561,14 @@ els.main.addEventListener("drop", e => {
 
 (async function start() {
   const params = new URLSearchParams(location.search);
+  // Static build: the transcript (and agent names) are baked in by
+  // build_static.py — render immediately, no server or data file needed.
+  if (typeof window.__TRANSCRIPT__ === "string") {
+    if (window.__AGENTS__) agentNames = window.__AGENTS__;
+    try { render(parseTranscript(window.__TRANSCRIPT__)); }
+    catch (e) { alert("Could not parse embedded transcript: " + e.message); }
+    return;
+  }
   // Always try to fetch display names even for ?file= loads.
   try { const a = await fetch("/api/agents"); if (a.ok) agentNames = await a.json(); } catch (_) {}
   if (params.get("file")) {

@@ -39,15 +39,113 @@ class StepLabel(StrEnum):
     members may be added without schema changes anywhere else.
     """
 
-    # FINALISE is the only label the current single-call turn produces. SEARCH
-    # and LIST_PROPOSALS are kept so transcripts recorded by the pre-refactor
-    # tool loop still deserialise (see implement_skills.md).
+    # The typed-turn labels (PROPOSE / CRITIQUE) are what the current loop emits:
+    # one llm Step per turn, labelled PROPOSE in the blind round 0 and CRITIQUE in
+    # the clash rounds (the mandatory attack is a clash turn's primary act). DEFEND
+    # and REVISE name the other components a clash turn carries — recorded as
+    # structured Turn fields rather than separate Steps — and are reserved for
+    # finer-grained per-step scoring later.
+    PROPOSE = "propose"
+    CRITIQUE = "critique"
+    DEFEND = "defend"
+    REVISE = "revise"
+    # FINALISE is retained for the pre-typed-turn single-call loop. SEARCH and
+    # LIST_PROPOSALS are kept so transcripts recorded by the pre-refactor tool
+    # loop still deserialise (see implement_skills.md).
+    FINALISE = "finalise"
     SEARCH = "search"
     LIST_PROPOSALS = "list_proposals"
-    FINALISE = "finalise"
     # --- reserved room to extend (skill taxonomy) ---
     ARGUMENT_CLASSIFICATION = "argument_classification"
     CONFLICT_DETECTION = "conflict_detection"
+
+
+class AttackType(StrEnum):
+    """How a :class:`Critique` attacks its target — the typed-tag the doc requires.
+
+    ``cf_value_conflict`` is the genuinely CF-grounded attack: direct evidence the
+    agent is reasoning from its framework rather than from the base-model prior.
+    """
+
+    CONTEST_GROUNDS = "contest_grounds"  # the evidence is wrong, insufficient, inapplicable
+    CONTEST_WARRANT = "contest_warrant"  # grounds accepted but do not license the claim
+    CF_VALUE_CONFLICT = "cf_value_conflict"  # coherent, but violates a value this CF holds primary
+
+
+# Toulmin components an agent may quote and attack. Used by the Direct Clash
+# validator to resolve which span of the target the ``quoted`` text must match.
+TOULMIN_COMPONENTS = ("claim", "grounds", "cf_warrant", "qualifier")
+
+
+class ToulminProposal(BaseModel):
+    """A CF-legible opening proposal (round 0), structured as a Toulmin argument.
+
+    ``cf_warrant`` is the field that makes the proposal CF-legible rather than
+    generic: the inferential link from ``grounds`` to ``claim`` routed through the
+    agent's framework value. ``qualifier`` states where the claim does *not* hold —
+    a deliberate attack surface for later rounds.
+    """
+
+    claim: str
+    grounds: str
+    cf_warrant: str
+    qualifier: str
+
+    def component(self, name: str) -> str:
+        """Return one component's text by name (one of :data:`TOULMIN_COMPONENTS`)."""
+        return str(getattr(self, name))
+
+
+class Critique(BaseModel):
+    """One typed attack on another agent's proposal — the payload of a CRITIQUE.
+
+    ``quoted`` must be a verbatim span of the target's ``target_component`` (the
+    Direct Clash anchor); the agent loop rejects critiques that fail this. ``seq``
+    is the critique's index within its author's turn, giving each a stable
+    :attr:`ref` the defending agent cites in the next round.
+    """
+
+    critic_cf: str
+    target_cf: str
+    target_component: str
+    quoted: str
+    attack_type: AttackType
+    argument: str
+    seq: int = 0
+    # None = not yet evaluated (e.g. the final round, which no later round answers);
+    # True/False is set once the target's next round closes (dropped-argument rule).
+    conceded: bool | None = None
+
+    @property
+    def ref(self) -> str:
+        """Stable handle the defending agent references — unique within a round."""
+        return f"{self.critic_cf}#{self.seq}"
+
+
+class Defense(BaseModel):
+    """A response to a critique levelled at this agent in the previous round.
+
+    ``critique_ref`` matches a :attr:`Critique.ref`. Any open critique left without
+    a matching :class:`Defense` at round end is marked ``conceded`` (the
+    dropped-argument convention from competitive debate).
+    """
+
+    critique_ref: str
+    rebuttal: str
+
+
+class Revision(BaseModel):
+    """The optional update step, with a forced ``delta``.
+
+    ``delta`` is the per-agent drift signal: a non-null value states *what* changed
+    and *why* (and carries the new claim in ``revised_claim``); a null ``delta`` is
+    permitted but must be justified in ``rationale`` — converting silence into an
+    observable decision.
+    """
+
+    delta: str | None = None
+    revised_claim: str | None = None  # the new claim text when delta is non-null
+    rationale: str = ""  # required justification when delta is null
 
 
 class Step(BaseModel):
@@ -84,14 +182,22 @@ class Turn(BaseModel):
     """One agent's full contribution in a round.
 
     ``steps`` is the complete intra-turn trajectory (private cognition + the
-    final call); ``proposal`` and ``justification`` are the only parts shared
-    with other agents.
+    final call) and is **never** shared with other agents. The *shared substance*
+    is the typed structure: ``toulmin`` (the round-0 opening), or the clash triple
+    ``critiques`` / ``defenses`` / ``revision`` (rounds ≥ 1). ``proposal`` and
+    ``justification`` remain a flat, human-readable rendering of that substance —
+    kept for backward compatibility and the JSONL round-trip. All typed fields
+    default empty, so transcripts predating the typed turn still deserialise.
     """
 
     cf_id: str
     round_idx: int
     proposal: str
     justification: str
+    toulmin: ToulminProposal | None = None  # round 0: the blind opening
+    critiques: list[Critique] = Field(default_factory=list)  # clash rounds: the attacks
+    defenses: list[Defense] = Field(default_factory=list)  # clash rounds: replies to prior attacks
+    revision: Revision | None = None  # clash rounds: the forced update step
     steps: list[Step] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -109,11 +215,68 @@ class Round(BaseModel):
     turns: list[Turn] = Field(default_factory=list)
 
 
+# --------------------------------------------------------------------------- #
+# Judge verdict — the post-deliberation report (see judge.py).
+#
+# These live here, not in judge.py, because the Transcript embeds the Verdict so
+# the viewer (and any consumer) can read it straight off the transcript. The
+# *evaluation* logic stays in judge.py; only the data shape lives here, alongside
+# the rest of the transcript spine it now belongs to.
+# --------------------------------------------------------------------------- #
+class CFSummary(BaseModel):
+    """One framework's arc through the debate."""
+
+    cf_id: str
+    opening: str  # the position it opened with (round 0)
+    evolution: str  # how it moved (or held) across the clash rounds, and why
+    final_position: str  # where it ended
+
+
+class Concern(BaseModel):
+    """One allegation a proposal drew from another framework."""
+
+    raised_by: str  # the critic CF
+    summary: str  # the concern, in the judge's words
+
+
+class DivergentPosition(BaseModel):
+    """A candidate policy and the concerns the other CFs hold about it.
+
+    The pluralistic view: for each surviving proposal, what each *other* framework
+    would object to if the policymaker chose it.
+    """
+
+    cf_id: str
+    final_proposal: str
+    concerns: list[Concern] = Field(default_factory=list)
+
+
+class Verdict(BaseModel):
+    """The judge's report on a finished deliberation.
+
+    On a consensus, ``consensus_policy`` describes the agreed policy and
+    ``divergent_positions`` is empty. Otherwise ``divergent_positions`` carries
+    every CF's final proposal with the allegations it drew. ``parse_status`` is
+    ``"fallback"`` (with ``raw_text`` kept) when the reply could not be parsed —
+    the judge never crashes a run.
+    """
+
+    debate_summary: str
+    cf_summaries: list[CFSummary] = Field(default_factory=list)
+    consensus: bool = False
+    consensus_policy: str | None = None
+    divergent_positions: list[DivergentPosition] = Field(default_factory=list)
+    parse_status: str = "ok"  # "ok" | "fallback"
+    raw_text: str | None = None  # kept verbatim when parsing fails
+
+
 class Transcript(BaseModel):
-    """The deliberation record: a scenario plus an ordered list of rounds."""
+    """The deliberation record: a scenario, an ordered list of rounds, and — once
+    the judge has run — its :class:`Verdict`."""
 
     scenario: str
     rounds: list[Round] = Field(default_factory=list)
+    verdict: Verdict | None = None  # set by the judge as the final step; persisted
 
     # --- mutation -------------------------------------------------------
     def append(self, turn: Turn) -> None:
@@ -173,55 +336,151 @@ class Transcript(BaseModel):
             latest[turn.cf_id] = turn.proposal
         return latest
 
+    # --- typed-turn reads (zero API spend) ------------------------------
+    def latest_toulmin(self, cf_id: str) -> ToulminProposal | None:
+        """An agent's most recent :class:`ToulminProposal` (its round-0 opening)."""
+        found: ToulminProposal | None = None
+        for turn in self._iter_turns():
+            if turn.cf_id == cf_id and turn.toulmin is not None:
+                found = turn.toulmin
+        return found
+
+    def current_claim(self, cf_id: str) -> str | None:
+        """An agent's standing claim: its Toulmin ``claim``, overridden by the most
+        recent non-null :class:`Revision`'s ``revised_claim``."""
+        claim: str | None = None
+        for turn in self._iter_turns():
+            if turn.cf_id != cf_id:
+                continue
+            if turn.toulmin is not None:
+                claim = turn.toulmin.claim
+            if turn.revision is not None and turn.revision.revised_claim:
+                claim = turn.revision.revised_claim
+        return claim
+
+    def component_text(self, cf_id: str, component: str) -> str | None:
+        """The current text of one Toulmin component for ``cf_id``.
+
+        ``claim`` reflects the latest revision; the other components come from the
+        agent's round-0 Toulmin (only the claim is revisable). Returns ``None`` if
+        the agent has no opening on record.
+        """
+        if component == "claim":
+            return self.current_claim(cf_id)
+        toulmin = self.latest_toulmin(cf_id)
+        if toulmin is None or component not in TOULMIN_COMPONENTS:
+            return None
+        return toulmin.component(component)
+
+    def open_critiques_against(self, cf_id: str, round_idx: int) -> list[Critique]:
+        """Critiques targeting ``cf_id`` raised in ``round_idx - 1``.
+
+        These are the entries an agent must answer in its round-``round_idx``
+        DEFEND step; any it leaves unanswered are marked conceded at round end.
+        """
+        prev = round_idx - 1
+        if prev < 0:
+            return []
+        out: list[Critique] = []
+        for rnd in self.rounds:
+            if rnd.index != prev:
+                continue
+            for turn in rnd.turns:
+                out.extend(c for c in turn.critiques if c.target_cf == cf_id)
+        return out
+
     # --- context construction ------------------------------------------
+    @staticmethod
+    def _shared_body(turn: Turn) -> str:
+        """The shared substance of one turn — the typed structure when present,
+        else the flat proposal/justification. Private ``steps`` never appear here.
+        """
+        if turn.toulmin is not None:  # round 0: the Toulmin opening
+            t = turn.toulmin
+            return (
+                f"Claim: {t.claim}\n"
+                f"Grounds: {t.grounds}\n"
+                f"CF-warrant: {t.cf_warrant}\n"
+                f"Qualifier: {t.qualifier}"
+            )
+        if turn.critiques or turn.defenses or turn.revision is not None:  # clash turn
+            parts: list[str] = []
+            for c in turn.critiques:
+                parts.append(
+                    f"Critique → {c.target_cf} ({c.target_component}, {c.attack_type}): "
+                    f'quotes "{c.quoted}" — {c.argument}'
+                )
+            for d in turn.defenses:
+                parts.append(f"Defense of {d.critique_ref}: {d.rebuttal}")
+            if turn.revision is not None:
+                r = turn.revision
+                if r.delta:
+                    head = f"Revised claim: {r.revised_claim}" if r.revised_claim else "Revised"
+                    parts.append(f"{head} — {r.delta}")
+                else:
+                    parts.append(f"Held position — {r.rationale}")
+            return "\n".join(parts)
+        return f"Proposal: {turn.proposal}\nJustification: {turn.justification}"
+
     def as_messages(self, cf_id: str) -> list[dict[str, Any]]:
         """OpenAI-format shared context for ``cf_id``'s next turn.
 
-        Renders only each prior turn's ``proposal`` + ``justification`` — private
-        ``steps`` are excluded, so agents never see each other's scratchpads. A
-        turn produced by ``cf_id`` itself is rendered as an ``assistant`` message;
-        every other turn is a ``user`` message tagged with its author.
+        Renders only each prior turn's shared substance (its typed structure, or
+        the flat proposal/justification fallback) — private ``steps`` are excluded,
+        so agents never see each other's scratchpads. A turn produced by ``cf_id``
+        itself is rendered as an ``assistant`` message; every other turn is a
+        ``user`` message tagged with its author.
         """
         messages: list[dict[str, Any]] = []
         for turn in self._iter_turns():
             # The reader's own turns are "assistant"; everyone else is "user".
             role = "assistant" if turn.cf_id == cf_id else "user"
-            content = (  # only the shared fields — never the private steps
-                f"[{turn.cf_id} · round {turn.round_idx}]\n"
-                f"Proposal: {turn.proposal}\n"
-                f"Justification: {turn.justification}"
-            )
+            content = f"[{turn.cf_id} · round {turn.round_idx}]\n{self._shared_body(turn)}"
             messages.append({"role": role, "content": content})
         return messages
 
     def render(self) -> str:
-        """Human-readable round-by-round timeline of proposals + justifications."""
+        """Human-readable round-by-round timeline of each turn's shared substance."""
         lines: list[str] = [f"SCENARIO\n{self.scenario.strip()}\n"]
         for rnd in self.rounds:
             lines.append(f"{'=' * 70}\nROUND {rnd.index}\n{'=' * 70}")
             for turn in rnd.turns:
                 lines.append(f"\n[{turn.cf_id}]")
-                lines.append(f"  Proposal: {turn.proposal}")
-                lines.append(f"  Justification: {turn.justification}")
+                body = self._shared_body(turn)
+                lines.extend(f"  {line}" for line in body.splitlines())
             lines.append("")
         return "\n".join(lines)
 
     # --- (de)serialisation: lossless round-trip incl. all steps ---------
     def to_jsonl(self, path: str) -> None:
-        """Serialise to JSONL: a header line (scenario) then one line per round."""
+        """Serialise to JSONL: a header line then one line per round.
+
+        The header carries the scenario and, once the judge has run, the verdict —
+        so the verdict travels with the transcript and any consumer (the viewer
+        included) reads it straight off the header. Omitted when unset, keeping the
+        header byte-identical to pre-judge transcripts.
+        """
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
+        header: dict[str, Any] = {"scenario": self.scenario}
+        if self.verdict is not None:
+            header["verdict"] = self.verdict.model_dump()
         with p.open("w", encoding="utf-8") as f:
-            f.write(json.dumps({"scenario": self.scenario}, ensure_ascii=False) + "\n")  # header
+            f.write(json.dumps(header, ensure_ascii=False) + "\n")  # header
             for rnd in self.rounds:
                 f.write(rnd.model_dump_json() + "\n")  # one round per line, steps included
 
     @staticmethod
     def from_jsonl(path: str) -> Transcript:
-        """Inverse of :meth:`to_jsonl`; a lossless round-trip including all steps."""
+        """Inverse of :meth:`to_jsonl`; a lossless round-trip including all steps.
+
+        Tolerates pre-judge transcripts whose header has no ``verdict`` key.
+        """
         lines = [ln for ln in Path(path).read_text(encoding="utf-8").splitlines() if ln.strip()]
         if not lines:
             raise ValueError(f"empty transcript file: {path}")
-        header = json.loads(lines[0])  # first line = scenario header
+        header = json.loads(lines[0])  # first line = scenario (+ optional verdict)
         rounds = [Round.model_validate_json(ln) for ln in lines[1:]]  # rest = rounds
-        return Transcript(scenario=header["scenario"], rounds=rounds)
+        raw_verdict = header.get("verdict")
+        verdict = Verdict.model_validate(raw_verdict) if raw_verdict else None
+        return Transcript(scenario=header["scenario"], rounds=rounds, verdict=verdict)
