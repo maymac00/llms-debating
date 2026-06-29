@@ -7,3 +7,8 @@ The country's social housing stock stands at just 2% of total housing, far below
 The homelessness response system is fragmented across national, regional, and municipal levels, creating coordination challenges and service gaps. Local authorities often lack sufficient funding to meet growing demand, while institutional practices remain anchored in outdated models that prioritize temporary shelter over permanent housing solutions. The absence of a reliable national data system makes it difficult to track the full scale of the crisis or identify effective interventions.
 
 Housing costs continue to rise, pushing more households to the brink while thousands remain trapped in cycles of street homelessness, unable to access the support needed to rebuild stable lives.
+
+## Task
+
+Propose a candidate policy to alleviate this situation in Barcelona. Justify the choice from
+the standpoint of your conceptual framework. Assume a fixed budget of 10M€.

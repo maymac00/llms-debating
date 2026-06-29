@@ -16,3 +16,7 @@ agents:
     #backend: { provider: vllm, base_url: http://10.147.1.1:8004/v1, model: QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ, temperature: 0.7 }
     backend: { provider: litellm, model: anthropic/claude-sonnet-4-6, temperature: 0.7 }
 output: outputs/transcript_explicit_touristban.jsonl
+# gemini/gemini-2.5-pro
+# anthropic/claude-sonnet-4-6
+# anthropic/claude-haiku-4-5-20251001
+# openai/gpt-4.1
