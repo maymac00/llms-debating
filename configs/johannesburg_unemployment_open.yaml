@@ -1,0 +1,31 @@
+scenario: scenarios/johannesburg_unemployment_openended.md
+T: 3
+protocol:
+  type: round_robin
+  order: shuffle
+  seed: 7   # required for reproducibility when order is shuffle
+agents:
+  # `temperature` is a per-agent sampling knob; any extra backend key is passed
+  # through to the provider. Omit it to fall back to DEFAULT_TEMPERATURE (0.7).
+  # Keep it well above 0 so agents don't collapse to near-identical proposals.
+  # One agent per provider: Anthropic, OpenAI, Gemini.
+  - path: agents/aristotle
+    backend: { provider: litellm, model: anthropic/claude-sonnet-4-6, temperature: 0.7 }
+  - path: agents/mill
+    backend: { provider: litellm, model: openai/gpt-4.1, temperature: 0.7 }
+  - path: agents/confucius
+    backend: { provider: litellm, model: gemini/gemini-2.5-pro, temperature: 0.7 }
+output: outputs/transcript_johannesburg_oe.jsonl
+
+# Final step (opt-in): an LLM judge evaluates the finished transcript and writes a
+# structured verdict (JSON). Remove this block to skip judging. The judge model is
+# configured here, independent of the debating agents; its prompt lives in judge.md.
+judge:
+  prompt: judge/judge.md
+  backend: { provider: litellm, model: anthropic/claude-sonnet-4-6, temperature: 0.3 }
+  output: outputs/verdict_johannesburg_oe.json
+
+# gemini/gemini-2.5-pro
+# anthropic/claude-sonnet-4-6
+# anthropic/claude-haiku-4-5-20251001
+# openai/gpt-4.1
